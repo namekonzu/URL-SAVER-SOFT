@@ -1,11 +1,13 @@
 #define UNICODE
 #define _UNICODE
 #define ID_TREE 100
+#define ID_ADD_FOLDER 101
+#define ID_BUTTON 1
 #include <windows.h>
 #include <commctrl.h>
 #include<shellapi.h>
 
-#define ID_BUTTON 1
+HWND g_tree;
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -13,7 +15,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_CREATE:
     {
-        HWND tree = CreateWindowW(
+        g_tree = CreateWindowW(
             WC_TREEVIEWW,
             L"",
             WS_VISIBLE |
@@ -31,6 +33,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL,
             NULL
         );
+        TreeView_SetItemHeight(g_tree, 40);
         TVINSERTSTRUCTW item = {0};
 
         item.hParent = TVI_ROOT;
@@ -38,7 +41,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         item.item.mask = TVIF_TEXT;
         item.item.pszText = L"青学";
         
-        HTREEITEM aogaku = TreeView_InsertItem(tree, &item);
+        HTREEITEM aogaku = TreeView_InsertItem(g_tree, &item);
 
         item.hParent = aogaku;
         item.hInsertAfter = TVI_LAST;
@@ -46,23 +49,45 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         item.item.pszText = L"青学ホームページ";
         item.item.lParam = (LPARAM)L"https://www.aoyama.ac.jp/";
 
-        TreeView_InsertItem(tree, &item);
+        TreeView_InsertItem(g_tree, &item);
+        CreateWindowW(
+        L"BUTTON",
+        L"フォルダ追加",
+        WS_VISIBLE | WS_CHILD,
+        440,
+        20,
+        120,
+        35,
+        hwnd,
+        (HMENU)ID_ADD_FOLDER,
+        NULL,
+        NULL
+        );
     }
     case WM_COMMAND:
-        if (LOWORD(wParam) == ID_BUTTON)
-        {
-            MessageBoxW(hwnd,
-                L"Hello, World!",
-                L"URLBox",
-                MB_OK
-            );
-        }
-        return 0;
+    {
+    if (LOWORD(wParam) == ID_ADD_FOLDER)
+    {
+        TVINSERTSTRUCTW item = {0};
+
+        item.hParent = TVI_ROOT;
+        item.hInsertAfter = TVI_LAST;
+        item.item.mask = TVIF_TEXT;
+        item.item.pszText = L"新しいフォルダ";
+
+        TreeView_InsertItem(
+            g_tree,
+            &item
+        );
+    }
+
+    return 0;
+    }
     case WM_NOTIFY:
     {
         LPNMHDR header = (LPNMHDR)lParam;
         if (header->idFrom == ID_TREE &&
-            header->code == NM_DBLCLK)
+            header->code == NM_DBLCLK||header->code==NM_RCLICK)
         {
             HWND tree = header->hwndFrom;
             HTREEITEM selected =
