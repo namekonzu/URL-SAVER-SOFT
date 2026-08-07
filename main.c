@@ -2,12 +2,22 @@
 #define _UNICODE
 #define ID_TREE 100
 #define ID_ADD_FOLDER 101
+#define ID_NAME_EDIT 102
+#define ID_RENAME 103
 #define ID_BUTTON 1
+#define ID_FILE_NAME_EDIT 104
+#define ID_URL_EDIT       105
+#define ID_ADD_FILE       106
 #include <windows.h>
 #include <commctrl.h>
 #include<shellapi.h>
+#include <stdlib.h>
+#include <string.h>
 
 HWND g_tree;
+HWND g_nameEdit;
+HWND g_fileNameEdit;
+HWND g_urlEdit;
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -51,17 +61,43 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         TreeView_InsertItem(g_tree, &item);
         CreateWindowW(
-        L"BUTTON",
-        L"フォルダ追加",
-        WS_VISIBLE | WS_CHILD,
-        440,
-        20,
-        120,
-        35,
-        hwnd,
-        (HMENU)ID_ADD_FOLDER,
-        NULL,
-        NULL
+            L"BUTTON",
+            L"フォルダ追加",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            20,
+            120,
+            35,
+            hwnd,
+            (HMENU)ID_ADD_FOLDER,
+            NULL,
+            NULL
+        );
+        g_nameEdit = CreateWindowW(
+            L"EDIT",
+            L"",
+            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+            440,
+            70,
+            200,
+            30,
+            hwnd,
+            (HMENU)ID_NAME_EDIT,
+            NULL,
+            NULL
+        );
+        CreateWindowW(
+            L"BUTTON",
+            L"名前変更",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            110,
+            120,
+            35,
+            hwnd,
+            (HMENU)ID_RENAME,
+            NULL,
+            NULL
         );
     }
     case WM_COMMAND:
@@ -79,6 +115,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             g_tree,
             &item
         );
+    }
+    if (LOWORD(wParam) == ID_RENAME)
+    {
+        HTREEITEM selected =
+            TreeView_GetSelection(g_tree);
+
+    if (selected != NULL)
+        {
+            WCHAR newName[256];
+
+            GetWindowTextW(
+                g_nameEdit,
+                newName,
+                256
+            );
+
+            if (newName[0] != L'\0')
+            {
+                TVITEMW item = {0};
+
+                item.mask = TVIF_TEXT;
+                item.hItem = selected;
+                item.pszText = newName;
+
+                TreeView_SetItem(
+                    g_tree,
+                    &item
+                );
+            }
+        }
     }
 
     return 0;
