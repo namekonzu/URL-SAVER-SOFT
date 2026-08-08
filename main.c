@@ -8,16 +8,115 @@
 #define ID_FILE_NAME_EDIT 104
 #define ID_URL_EDIT       105
 #define ID_ADD_FILE       106
+#define ID_DELETE         107
 #include <windows.h>
 #include <commctrl.h>
 #include<shellapi.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windowsx.h>
 
 HWND g_tree;
 HWND g_nameEdit;
 HWND g_fileNameEdit;
 HWND g_urlEdit;
+
+void FreeTreeItemData(
+    HWND tree,
+    HTREEITEM item
+)
+{
+    HTREEITEM child =
+        TreeView_GetChild(tree, item);
+
+    while (child != NULL)
+    {
+        HTREEITEM next =
+            TreeView_GetNextSibling(
+                tree,
+                child
+            );
+
+
+        FreeTreeItemData(
+            tree,
+            child
+        );
+
+        child = next;
+    }
+
+
+    TVITEMW treeItem = {0};
+
+    treeItem.mask = TVIF_PARAM;
+    treeItem.hItem = item;
+
+    TreeView_GetItem(
+        tree,
+        &treeItem
+    );
+
+
+    if (treeItem.lParam != 0)
+    {
+        free(
+            (void *)treeItem.lParam
+        );
+    }
+}
+
+void CopyTextToClipboard(
+    HWND hwnd,
+    LPCWSTR text
+)
+{
+    size_t size =
+        (wcslen(text) + 1) *
+        sizeof(WCHAR);
+
+    HGLOBAL memory =
+        GlobalAlloc(
+            GMEM_MOVEABLE,
+            size
+        );
+
+    if (memory == NULL)
+        return;
+
+    WCHAR *buffer =
+        (WCHAR *)GlobalLock(memory);
+
+    if (buffer == NULL)
+    {
+        GlobalFree(memory);
+        return;
+    }
+
+    memcpy(
+        buffer,
+        text,
+        size
+    );
+
+    GlobalUnlock(memory);
+
+    if (OpenClipboard(hwnd))
+    {
+        EmptyClipboard();
+
+        SetClipboardData(
+            CF_UNICODETEXT,
+            memory
+        );
+
+        CloseClipboard();
+    }
+    else
+    {
+        GlobalFree(memory);
+    }
+}
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -99,6 +198,58 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL,
             NULL
         );
+        g_fileNameEdit = CreateWindowW(
+            L"EDIT",
+            L"",
+            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+            440,
+            180,
+            250,
+            30,
+            hwnd,
+            (HMENU)ID_FILE_NAME_EDIT,
+            NULL,
+            NULL
+        );
+        g_urlEdit = CreateWindowW(
+            L"EDIT",
+            L"",
+            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+            440,
+            220,
+            250,
+            30,
+            hwnd,
+            (HMENU)ID_URL_EDIT,
+            NULL,
+            NULL
+        );
+        CreateWindowW(
+            L"BUTTON",
+            L"ファイル追加",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            260,
+            120,
+            35,
+            hwnd,
+            (HMENU)ID_ADD_FILE,
+            NULL,
+            NULL
+        );
+        CreateWindowW(
+            L"BUTTON",
+            L"削除",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            320,
+            120,
+            35,
+            hwnd,
+            (HMENU)ID_DELETE,
+            NULL,
+            NULL
+);
     }
     case WM_COMMAND:
     {
@@ -143,17 +294,136 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     g_tree,
                     &item
                 );
+                SetWindowTextW(g_nameEdit, L"");
+                SetFocus(g_nameEdit); 
+            }
+        }
+    }
+    if (LOWORD(wParam) == ID_ADD_FILE)
+    {
+        HTREEITEM selected =
+            TreeView_GetSelection(g_tree);
+
+        if (selected != NULL)
+        {
+            WCHAR fileName[256];
+
+            GetWindowTextW(
+                g_fileNameEdit,
+                fileName,
+                256
+            );
+            int urlLength =
+            GetWindowTextLengthW(g_urlEdit);
+
+            if (fileName[0] != L'\0' &&
+                urlLength > 0)
+            {
+                WCHAR *savedUrl =
+                malloc(
+                    (urlLength + 1) *
+                    sizeof(WCHAR)
+                );
+
+                if (savedUrl != NULL)
+                {
+                    GetWindowTextW(
+                        g_urlEdit,
+                        savedUrl,
+                        urlLength + 1
+                    );
+
+                    TVINSERTSTRUCTW item = {0};
+
+                    item.hParent = selected;
+                    item.hInsertAfter = TVI_LAST;
+
+                    item.item.mask =
+                        TVIF_TEXT |
+                        TVIF_PARAM;
+
+                    item.item.pszText =
+                        fileName;
+
+                    item.item.lParam =
+                        (LPARAM)savedUrl;
+
+                    TreeView_InsertItem(
+                        g_tree,
+                        &item
+                    );
+                    SetWindowTextW(g_fileNameEdit, L"");
+                    SetWindowTextW(g_urlEdit, L"");
+                }
+            }
+        }
+    }
+    if (LOWORD(wParam) == ID_DELETE)
+    {
+        HTREEITEM selected =
+            TreeView_GetSelection(g_tree);
+
+        if (selected != NULL)
+        {
+            int result = MessageBoxW(
+                hwnd,
+                L"選択した項目を削除しますか？",
+                L"削除確認",
+                MB_YESNO | MB_ICONWARNING
+            );
+
+            if (result == IDYES)
+            {
+                FreeTreeItemData(
+                    g_tree,
+                    selected
+                );
+
+                TreeView_DeleteItem(
+                    g_tree,
+                    selected
+                );
+
+                SetWindowTextW(
+                    g_nameEdit,
+                    L""
+                );
             }
         }
     }
 
     return 0;
-    }
+}
     case WM_NOTIFY:
     {
         LPNMHDR header = (LPNMHDR)lParam;
         if (header->idFrom == ID_TREE &&
-            header->code == NM_DBLCLK||header->code==NM_RCLICK)
+        header->code == TVN_SELCHANGEDW)
+            {
+                LPNMTREEVIEWW treeInfo =
+                    (LPNMTREEVIEWW)lParam;
+
+                WCHAR itemName[256];
+
+                TVITEMW item = {0};
+
+                item.mask = TVIF_TEXT;
+                item.hItem = treeInfo->itemNew.hItem;
+                item.pszText = itemName;
+                item.cchTextMax = 256;
+
+                TreeView_GetItem(
+                    g_tree,
+                    &item
+                );
+
+                SetWindowTextW(
+                    g_nameEdit,
+                    itemName
+                );
+            }
+        if (header->idFrom == ID_TREE &&
+            header->code == NM_DBLCLK)
         {
             HWND tree = header->hwndFrom;
             HTREEITEM selected =
@@ -183,6 +453,60 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         NULL,
                         NULL,
                         SW_SHOWNORMAL
+                    );
+                }
+            }
+        }
+
+        if (header->idFrom == ID_TREE &&
+            header->code == NM_CLICK)
+        {
+            DWORD position =
+                GetMessagePos();
+
+            POINT point;
+
+            point.x =
+                GET_X_LPARAM(position);
+
+            point.y =
+                GET_Y_LPARAM(position);
+
+            ScreenToClient(
+                g_tree,
+                &point
+            );
+
+            TVHITTESTINFO hitInfo = {0};
+
+            hitInfo.pt = point;
+
+            HTREEITEM clicked =
+                TreeView_HitTest(
+                    g_tree,
+                    &hitInfo
+                );
+
+            if (clicked != NULL)
+            {
+                TVITEMW item = {0};
+
+                item.mask = TVIF_PARAM;
+                item.hItem = clicked;
+
+                TreeView_GetItem(
+                    g_tree,
+                    &item
+                );
+
+                if (item.lParam != 0)
+                {
+                    LPCWSTR url =
+                        (LPCWSTR)item.lParam;
+
+                    CopyTextToClipboard(
+                        hwnd,
+                        url
                     );
                 }
             }
