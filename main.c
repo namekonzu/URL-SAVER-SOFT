@@ -15,11 +15,174 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windowsx.h>
+#include <sqlite3.h>
 
 HWND g_tree;
 HWND g_nameEdit;
 HWND g_fileNameEdit;
 HWND g_urlEdit;
+sqlite3 *g_db = NULL;
+typedef struct
+{
+    sqlite3_int64 id;
+    WCHAR *url;
+} ItemData;
+
+int InitDatabase(void)
+{
+    int result;
+
+    result = sqlite3_open(
+        "urlbox.db",
+        &g_db
+    );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+    result = sqlite3_exec(
+        g_db,
+        "PRAGMA foreign_keys = ON;",
+        NULL,
+        NULL,
+        NULL
+    );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+    const char *sql =
+        "CREATE TABLE IF NOT EXISTS items ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "parent_id INTEGER,"
+        "type TEXT NOT NULL,"
+        "name TEXT NOT NULL,"
+        "url TEXT,"
+        "FOREIGN KEY(parent_id) "
+        "REFERENCES items(id) "
+        "ON DELETE CASCADE"
+        ");";
+
+    char *errorMessage = NULL;
+
+    result = sqlite3_exec(
+        g_db,
+        sql,
+        NULL,
+        NULL,
+        &errorMessage
+    );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            errorMessage,
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        sqlite3_free(errorMessage);
+
+        return 0;
+    }
+
+    return 1;
+}
+
+sqlite3_int64 InsertFolderToDatabase(
+    LPCWSTR name
+)
+{
+    sqlite3_stmt *stmt = NULL;
+
+    const WCHAR *sql =
+        L"INSERT INTO items "
+        L"(parent_id, type, name, url) "
+        L"VALUES "
+        L"(NULL, 'folder', ?, NULL);";
+
+    int result =
+        sqlite3_prepare16_v2(
+            g_db,
+            sql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return -1;
+    }
+
+
+    result =
+        sqlite3_bind_text16(
+            stmt,
+            1,
+            name,
+            -1,
+            SQLITE_TRANSIENT
+        );
+
+    if (result != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+
+    result =
+        sqlite3_step(stmt);
+
+    if (result != SQLITE_DONE)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        sqlite3_finalize(stmt);
+
+        return -1;
+    }
+
+
+    sqlite3_int64 id =
+        sqlite3_last_insert_rowid(g_db);
+
+    sqlite3_finalize(stmt);
+
+    return id;
+}
 
 void FreeTreeItemData(
     HWND tree,
@@ -172,6 +335,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL,
             NULL
         );
+
         g_nameEdit = CreateWindowW(
             L"EDIT",
             L"",
@@ -198,6 +362,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL,
             NULL
         );
+        CreateWindowW(
+            L"STATIC",
+            L"サイト名",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            160,
+            250,
+            20,
+            hwnd,
+            NULL,
+            NULL,
+            NULL
+        );
         g_fileNameEdit = CreateWindowW(
             L"EDIT",
             L"",
@@ -208,6 +385,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             30,
             hwnd,
             (HMENU)ID_FILE_NAME_EDIT,
+            NULL,
+            NULL
+        );
+        CreateWindowW(
+            L"STATIC",
+            L"URL",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            200,
+            250,
+            20,
+            hwnd,
+            NULL,
             NULL,
             NULL
         );
@@ -249,7 +439,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             (HMENU)ID_DELETE,
             NULL,
             NULL
-);
+        
+        );
+        CreateWindowW(
+            L"STATIC",
+            L"【使い方】\n"
+            L"・フォルダを選択してURLを追加\n"
+            L"・左クリック：URLをコピー\n"
+            L"・ダブルクリック：サイトを開く\n"
+            L"・項目を選択して名前変更(ファイル、フォルダ)\n"
+            L"【注意】削除すると子項目も削除",
+            WS_VISIBLE | WS_CHILD,
+            440,
+            380,
+            320,
+            130,
+            hwnd,
+            NULL,
+            NULL,
+            NULL
+        );
     }
     case WM_COMMAND:
     {
@@ -515,8 +724,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_DESTROY:
+    {
+        if (g_db != NULL)
+        {
+            sqlite3_close(g_db);
+            g_db = NULL;
+        }
+
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -526,6 +743,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
                    LPSTR lpCmdLine,
                    int nCmdShow)
 {
+    if (!InitDatabase())
+    {
+        return 1;
+    }
+
     INITCOMMONCONTROLSEX icex = {0};
 
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
