@@ -311,15 +311,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         item.hParent = TVI_ROOT;
         item.hInsertAfter = TVI_LAST;
         item.item.mask = TVIF_TEXT;
-        item.item.pszText = L"青学";
         
         HTREEITEM aogaku = TreeView_InsertItem(g_tree, &item);
 
         item.hParent = aogaku;
         item.hInsertAfter = TVI_LAST;
         item.item.mask = TVIF_TEXT|TVIF_PARAM;
-        item.item.pszText = L"青学ホームページ";
-        item.item.lParam = (LPARAM)L"https://www.aoyama.ac.jp/";
 
         TreeView_InsertItem(g_tree, &item);
         CreateWindowW(
@@ -464,12 +461,49 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     if (LOWORD(wParam) == ID_ADD_FOLDER)
     {
+        sqlite3_int64 id =
+            InsertFolderToDatabase(
+                L"新しいフォルダ"
+            );
+
+        if (id == -1)
+        {
+            return 0;
+        }
+
+        ItemData *data =
+            malloc(sizeof(ItemData));
+
+        if (data == NULL)
+        {
+            MessageBoxW(
+                hwnd,
+                L"メモリの確保に失敗しました。",
+                L"Error",
+                MB_OK | MB_ICONERROR
+            );
+
+            return 0;
+        }
+
+        data->id = id;
+        data->url = NULL;
+
         TVINSERTSTRUCTW item = {0};
 
         item.hParent = TVI_ROOT;
         item.hInsertAfter = TVI_LAST;
-        item.item.mask = TVIF_TEXT;
-        item.item.pszText = L"新しいフォルダ";
+
+        item.item.mask =
+            TVIF_TEXT |
+            TVIF_PARAM;
+
+        item.item.pszText =
+            L"新しいフォルダ";
+
+        item.item.lParam =
+            (LPARAM)data;
+
 
         TreeView_InsertItem(
             g_tree,
