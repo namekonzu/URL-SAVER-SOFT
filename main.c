@@ -184,6 +184,80 @@ sqlite3_int64 InsertFolderToDatabase(
     return id;
 }
 
+int UpdateItemNameInDatabase(
+    sqlite3_int64 id,
+    LPCWSTR newName
+)
+{
+    if (id <= 0)
+    {
+        return 1;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+
+    const WCHAR *sql =
+        L"UPDATE items "
+        L"SET name = ? "
+        L"WHERE id = ?;";
+
+    int result =
+        sqlite3_prepare16_v2(
+            g_db,
+            sql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+    sqlite3_bind_text16(
+        stmt,
+        1,
+        newName,
+        -1,
+        SQLITE_TRANSIENT
+    );
+
+    sqlite3_bind_int64(
+        stmt,
+        2,
+        id
+    );
+
+    result =
+        sqlite3_step(stmt);
+
+    if (result != SQLITE_DONE)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        sqlite3_finalize(stmt);
+
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+
+    return 1;
+}
+
 void FreeTreeItemData(
     HWND tree,
     HTREEITEM item
@@ -223,17 +297,93 @@ void FreeTreeItemData(
 
     if (treeItem.lParam != 0)
     {
-        free(
-            (void *)treeItem.lParam
-        );
+        ItemData *data =
+            (ItemData *)treeItem.lParam;
+
+        if (data->url != NULL)
+        {
+            free(data->url);
+        }
+
+        free(data);
     }
 }
+
+int DeleteItemFromDatabase(
+    sqlite3_int64 id
+)
+{
+    if (id <= 0)
+    {
+        return 1;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+
+    const WCHAR *sql =
+        L"DELETE FROM items "
+        L"WHERE id = ?;";
+
+    int result =
+        sqlite3_prepare16_v2(
+            g_db,
+            sql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+    sqlite3_bind_int64(
+        stmt,
+        1,
+        id
+    );
+
+    result =
+        sqlite3_step(stmt);
+
+    if (result != SQLITE_DONE)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        sqlite3_finalize(stmt);
+
+        return 0;
+    }
+
+    sqlite3_finalize(stmt);
+
+    return 1;
+}
+
 
 void CopyTextToClipboard(
     HWND hwnd,
     LPCWSTR text
 )
 {
+    if(text==NULL)
+    {
+        return;
+    }
+
     size_t size =
         (wcslen(text) + 1) *
         sizeof(WCHAR);
@@ -502,7 +652,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         HTREEITEM selected =
             TreeView_GetSelection(g_tree);
 
-    if (selected != NULL)
+        if (selected != NULL)
         {
             WCHAR newName[256];
 
@@ -514,18 +664,58 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             if (newName[0] != L'\0')
             {
+                TVITEMW dataItem = {0};
+
+                dataItem.mask =
+                    TVIF_PARAM;
+
+                dataItem.hItem =
+                    selected;
+
+                TreeView_GetItem(
+                    g_tree,
+                    &dataItem
+                );
+
+                ItemData *data =
+                    (ItemData *)dataItem.lParam;
+
+                if (data != NULL &&
+                    data->id > 0)
+                {
+                    if (!UpdateItemNameInDatabase(
+                            data->id,
+                            newName))
+                    {
+                        return 0;
+                    }
+                }
+
+
                 TVITEMW item = {0};
 
-                item.mask = TVIF_TEXT;
-                item.hItem = selected;
-                item.pszText = newName;
+                item.mask =
+                    TVIF_TEXT;
+
+                item.hItem =
+                    selected;
+
+                item.pszText =
+                    newName;
 
                 TreeView_SetItem(
                     g_tree,
                     &item
                 );
-                SetWindowTextW(g_nameEdit, L"");
-                SetFocus(g_nameEdit); 
+
+                SetWindowTextW(
+                    g_nameEdit,
+                    L""
+                );
+
+                SetFocus(
+                    g_nameEdit
+                );
             }
         }
     }
@@ -575,8 +765,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     item.item.pszText =
                         fileName;
 
+                    ItemData *data =
+                        malloc(sizeof(ItemData));
+
+                    if (data == NULL)
+                    {
+                        free(savedUrl);
+                        return 0;
+                    }
+
+                    data->id = 0;
+                    data->url = savedUrl;
+
                     item.item.lParam =
-                        (LPARAM)savedUrl;
+                        (LPARAM)data;
 
                     TreeView_InsertItem(
                         g_tree,
@@ -604,6 +806,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             if (result == IDYES)
             {
+                TVITEMW item = {0};
+
+                item.mask = TVIF_PARAM;
+                item.hItem = selected;
+
+                TreeView_GetItem(
+                    g_tree,
+                    &item
+                );
+
+                ItemData *data =
+                    (ItemData *)item.lParam;
+
+
+                if (data != NULL &&
+                    data->id > 0)
+                {
+                    if (!DeleteItemFromDatabase(
+                            data->id))
+                    {
+                        return 0;
+                    }
+                }
+
                 FreeTreeItemData(
                     g_tree,
                     selected
@@ -613,6 +839,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     g_tree,
                     selected
                 );
+
 
                 SetWindowTextW(
                     g_nameEdit,
@@ -673,17 +900,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                 if (selectedItem.lParam != 0)
                 {
-                    LPCWSTR url =
-                        (LPCWSTR)selectedItem.lParam;
+                    ItemData *data =
+                        (ItemData *)selectedItem.lParam;
 
-                    ShellExecuteW(
-                        hwnd,
-                        L"open",
-                        url,
-                        NULL,
-                        NULL,
-                        SW_SHOWNORMAL
-                    );
+                    if (data->url != NULL)
+                    {
+                        ShellExecuteW(
+                            hwnd,
+                            L"open",
+                            data->url,
+                            NULL,
+                            NULL,
+                            SW_SHOWNORMAL
+                        );
+                    }
                 }
             }
         }
@@ -731,13 +961,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                 if (item.lParam != 0)
                 {
-                    LPCWSTR url =
-                        (LPCWSTR)item.lParam;
+                    ItemData *data =
+                        (ItemData *)item.lParam;
 
-                    CopyTextToClipboard(
-                        hwnd,
-                        url
-                    );
+                    if (data != NULL &&
+                        data->url != NULL)
+                    {
+                        CopyTextToClipboard(
+                            hwnd,
+                            data->url
+                        );
+                    }
                 }
             }
         }
