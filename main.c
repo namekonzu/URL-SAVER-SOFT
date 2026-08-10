@@ -16,6 +16,7 @@
 #include <string.h>
 #include <windowsx.h>
 #include <sqlite3.h>
+#include <wchar.h>
 
 HWND g_tree;
 HWND g_nameEdit;
@@ -484,6 +485,311 @@ int DeleteItemFromDatabase(
     return 1;
 }
 
+HTREEITEM FindTreeItemByDatabaseId(
+    HWND tree,
+    HTREEITEM item,
+    sqlite3_int64 id
+)
+{
+    while (item != NULL)
+    {
+        TVITEMW treeItem = {0};
+
+        treeItem.mask = TVIF_PARAM;
+        treeItem.hItem = item;
+
+        TreeView_GetItem(
+            tree,
+            &treeItem
+        );
+
+        if (treeItem.lParam != 0)
+        {
+            ItemData *data =
+                (ItemData *)treeItem.lParam;
+
+            if (data->id == id)
+            {
+                return item;
+            }
+        }
+
+        HTREEITEM child =
+            TreeView_GetChild(
+                tree,
+                item
+            );
+
+        if (child != NULL)
+        {
+            HTREEITEM found =
+                FindTreeItemByDatabaseId(
+                    tree,
+                    child,
+                    id
+                );
+
+            if (found != NULL)
+            {
+                return found;
+            }
+        }
+
+        item =
+            TreeView_GetNextSibling(
+                tree,
+                item
+            );
+    }
+
+    return NULL;
+}
+
+int LoadItemsFromDatabase(void)
+{
+    sqlite3_stmt *stmt = NULL;
+
+    const WCHAR *folderSql =
+        L"SELECT id, name "
+        L"FROM items "
+        L"WHERE type = 'folder' "
+        L"ORDER BY id;";
+
+    int result =
+        sqlite3_prepare16_v2(
+            g_db,
+            folderSql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        sqlite3_int64 id =
+            sqlite3_column_int64(
+                stmt,
+                0
+            );
+
+        LPCWSTR name =
+            (LPCWSTR)sqlite3_column_text16(
+                stmt,
+                1
+            );
+
+
+        ItemData *data =
+            malloc(sizeof(ItemData));
+
+        if (data == NULL)
+        {
+            sqlite3_finalize(stmt);
+            return 0;
+        }
+
+        data->id = id;
+        data->url = NULL;
+
+
+        TVINSERTSTRUCTW item = {0};
+
+        item.hParent =
+            TVI_ROOT;
+
+        item.hInsertAfter =
+            TVI_LAST;
+
+        item.item.mask =
+            TVIF_TEXT |
+            TVIF_PARAM;
+
+        item.item.pszText =
+            (LPWSTR)name;
+
+        item.item.lParam =
+            (LPARAM)data;
+
+
+        HTREEITEM inserted =
+            TreeView_InsertItem(
+                g_tree,
+                &item
+            );
+
+        if (inserted == NULL)
+        {
+            free(data);
+
+            sqlite3_finalize(stmt);
+
+            return 0;
+        }
+    }
+
+
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    const WCHAR *urlSql =
+        L"SELECT id, parent_id, name, url "
+        L"FROM items "
+        L"WHERE type = 'url' "
+        L"ORDER BY id;";
+
+
+    result =
+        sqlite3_prepare16_v2(
+            g_db,
+            urlSql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return 0;
+    }
+
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        sqlite3_int64 id =
+            sqlite3_column_int64(
+                stmt,
+                0
+            );
+
+        sqlite3_int64 parentId =
+            sqlite3_column_int64(
+                stmt,
+                1
+            );
+
+        LPCWSTR name =
+            (LPCWSTR)sqlite3_column_text16(
+                stmt,
+                2
+            );
+
+        LPCWSTR databaseUrl =
+            (LPCWSTR)sqlite3_column_text16(
+                stmt,
+                3
+            );
+
+        HTREEITEM parent =
+            FindTreeItemByDatabaseId(
+                g_tree,
+                TreeView_GetRoot(g_tree),
+                parentId
+            );
+
+        if (parent == NULL)
+        {
+            continue;
+        }
+
+
+        int urlLength =
+            (int)wcslen(databaseUrl);
+
+        WCHAR *savedUrl =
+            malloc(
+                (urlLength + 1) *
+                sizeof(WCHAR)
+            );
+
+        if (savedUrl == NULL)
+        {
+            sqlite3_finalize(stmt);
+            return 0;
+        }
+
+        wcscpy(
+            savedUrl,
+            databaseUrl
+        );
+
+
+        ItemData *data =
+            malloc(sizeof(ItemData));
+
+        if (data == NULL)
+        {
+            free(savedUrl);
+
+            sqlite3_finalize(stmt);
+
+            return 0;
+        }
+
+        data->id = id;
+        data->url = savedUrl;
+
+
+        TVINSERTSTRUCTW item = {0};
+
+        item.hParent =
+            parent;
+
+        item.hInsertAfter =
+            TVI_LAST;
+
+        item.item.mask =
+            TVIF_TEXT |
+            TVIF_PARAM;
+
+        item.item.pszText =
+            (LPWSTR)name;
+
+        item.item.lParam =
+            (LPARAM)data;
+
+
+        HTREEITEM inserted =
+            TreeView_InsertItem(
+                g_tree,
+                &item
+            );
+
+        if (inserted == NULL)
+        {
+            free(savedUrl);
+            free(data);
+
+            sqlite3_finalize(stmt);
+
+            return 0;
+        }
+    }
+
+
+    sqlite3_finalize(stmt);
+
+    return 1;
+}
 
 void CopyTextToClipboard(
     HWND hwnd,
@@ -567,6 +873,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL
         );
         TreeView_SetItemHeight(g_tree, 40);
+
+        if(!LoadItemsFromDatabase())
+        {
+            MessageBoxW(
+                hwnd,
+                L"データベースからの読み込みに失敗しました。",
+                L"Error",
+                MB_OK | MB_ICONERROR
+            );
+        }
         CreateWindowW(
             L"BUTTON",
             L"フォルダ追加",
