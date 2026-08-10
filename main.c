@@ -306,19 +306,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NULL
         );
         TreeView_SetItemHeight(g_tree, 40);
-        TVINSERTSTRUCTW item = {0};
-
-        item.hParent = TVI_ROOT;
-        item.hInsertAfter = TVI_LAST;
-        item.item.mask = TVIF_TEXT;
-        
-        HTREEITEM aogaku = TreeView_InsertItem(g_tree, &item);
-
-        item.hParent = aogaku;
-        item.hInsertAfter = TVI_LAST;
-        item.item.mask = TVIF_TEXT|TVIF_PARAM;
-
-        TreeView_InsertItem(g_tree, &item);
         CreateWindowW(
             L"BUTTON",
             L"フォルダ追加",
