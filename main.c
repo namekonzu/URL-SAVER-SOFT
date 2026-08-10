@@ -184,6 +184,117 @@ sqlite3_int64 InsertFolderToDatabase(
     return id;
 }
 
+sqlite3_int64 InsertUrlToDatabase(
+    sqlite3_int64 parentId,
+    LPCWSTR name,
+    LPCWSTR url
+)
+{
+    sqlite3_stmt *stmt = NULL;
+
+    const WCHAR *sql =
+        L"INSERT INTO items "
+        L"(parent_id, type, name, url) "
+        L"VALUES (?, 'url', ?, ?);";
+
+    int result =
+        sqlite3_prepare16_v2(
+            g_db,
+            sql,
+            -1,
+            &stmt,
+            NULL
+        );
+
+    if (result != SQLITE_OK)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        return -1;
+    }
+
+    /*
+     * 1番目の ? → parent_id
+     */
+    result =
+        sqlite3_bind_int64(
+            stmt,
+            1,
+            parentId
+        );
+
+    if (result != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    /*
+     * 2番目の ? → name
+     */
+    result =
+        sqlite3_bind_text16(
+            stmt,
+            2,
+            name,
+            -1,
+            SQLITE_TRANSIENT
+        );
+
+    if (result != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    /*
+     * 3番目の ? → url
+     */
+    result =
+        sqlite3_bind_text16(
+            stmt,
+            3,
+            url,
+            -1,
+            SQLITE_TRANSIENT
+        );
+
+    if (result != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    result =
+        sqlite3_step(stmt);
+
+    if (result != SQLITE_DONE)
+    {
+        MessageBoxA(
+            NULL,
+            sqlite3_errmsg(g_db),
+            "Database Error",
+            MB_OK | MB_ICONERROR
+        );
+
+        sqlite3_finalize(stmt);
+
+        return -1;
+    }
+
+    sqlite3_int64 id =
+        sqlite3_last_insert_rowid(g_db);
+
+    sqlite3_finalize(stmt);
+
+    return id;
+}
+
 int UpdateItemNameInDatabase(
     sqlite3_int64 id,
     LPCWSTR newName
@@ -726,6 +837,44 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         if (selected != NULL)
         {
+            /*
+            * 選択された項目のItemDataを取得
+            */
+            TVITEMW parentItem = {0};
+
+            parentItem.mask =
+                TVIF_PARAM;
+
+            parentItem.hItem =
+                selected;
+
+            TreeView_GetItem(
+                g_tree,
+                &parentItem
+            );
+
+            ItemData *parentData =
+                (ItemData *)parentItem.lParam;
+
+
+            /*
+            * フォルダ以外にはURLを追加させない
+            */
+            if (parentData == NULL ||
+                parentData->id <= 0 ||
+                parentData->url != NULL)
+            {
+                MessageBoxW(
+                    hwnd,
+                    L"URLを追加するフォルダを選択してください。",
+                    L"URL追加",
+                    MB_OK | MB_ICONINFORMATION
+                );
+
+                return 0;
+            }
+
+
             WCHAR fileName[256];
 
             GetWindowTextW(
@@ -733,60 +882,138 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 fileName,
                 256
             );
+
             int urlLength =
-            GetWindowTextLengthW(g_urlEdit);
+                GetWindowTextLengthW(
+                    g_urlEdit
+                );
+
 
             if (fileName[0] != L'\0' &&
                 urlLength > 0)
             {
+                /*
+                * URL保存用メモリ
+                */
                 WCHAR *savedUrl =
-                malloc(
-                    (urlLength + 1) *
-                    sizeof(WCHAR)
-                );
-
-                if (savedUrl != NULL)
-                {
-                    GetWindowTextW(
-                        g_urlEdit,
-                        savedUrl,
-                        urlLength + 1
+                    malloc(
+                        (urlLength + 1) *
+                        sizeof(WCHAR)
                     );
 
-                    TVINSERTSTRUCTW item = {0};
+                if (savedUrl == NULL)
+                {
+                    return 0;
+                }
 
-                    item.hParent = selected;
-                    item.hInsertAfter = TVI_LAST;
+                GetWindowTextW(
+                    g_urlEdit,
+                    savedUrl,
+                    urlLength + 1
+                );
 
-                    item.item.mask =
-                        TVIF_TEXT |
-                        TVIF_PARAM;
 
-                    item.item.pszText =
-                        fileName;
+                /*
+                * ItemDataも先に確保
+                */
+                ItemData *data =
+                    malloc(sizeof(ItemData));
 
-                    ItemData *data =
-                        malloc(sizeof(ItemData));
+                if (data == NULL)
+                {
+                    free(savedUrl);
+                    return 0;
+                }
 
-                    if (data == NULL)
-                    {
-                        free(savedUrl);
-                        return 0;
-                    }
 
-                    data->id = 0;
-                    data->url = savedUrl;
+                /*
+                * SQLiteへURLを保存
+                */
+                sqlite3_int64 id =
+                    InsertUrlToDatabase(
+                        parentData->id,
+                        fileName,
+                        savedUrl
+                    );
 
-                    item.item.lParam =
-                        (LPARAM)data;
+                if (id == -1)
+                {
+                    free(savedUrl);
+                    free(data);
 
+                    return 0;
+                }
+
+
+                /*
+                * DBから取得した本物のidを設定
+                */
+                data->id = id;
+                data->url = savedUrl;
+
+
+                /*
+                * TreeViewへ追加
+                */
+                TVINSERTSTRUCTW item = {0};
+
+                item.hParent =
+                    selected;
+
+                item.hInsertAfter =
+                    TVI_LAST;
+
+                item.item.mask =
+                    TVIF_TEXT |
+                    TVIF_PARAM;
+
+                item.item.pszText =
+                    fileName;
+
+                item.item.lParam =
+                    (LPARAM)data;
+
+
+                HTREEITEM newItem =
                     TreeView_InsertItem(
                         g_tree,
                         &item
                     );
-                    SetWindowTextW(g_fileNameEdit, L"");
-                    SetWindowTextW(g_urlEdit, L"");
+
+
+                /*
+                * TreeViewへの追加に失敗した場合
+                */
+                if (newItem == NULL)
+                {
+                    DeleteItemFromDatabase(id);
+
+                    free(savedUrl);
+                    free(data);
+
+                    MessageBoxW(
+                        hwnd,
+                        L"TreeViewへの追加に失敗しました。",
+                        L"Error",
+                        MB_OK | MB_ICONERROR
+                    );
+
+                    return 0;
                 }
+
+
+                /*
+                * 入力欄をクリア
+                */
+                SetWindowTextW(
+                    g_fileNameEdit,
+                    L""
+                );
+
+                SetWindowTextW(
+                    g_urlEdit,
+                    L""
+                );
             }
         }
     }
